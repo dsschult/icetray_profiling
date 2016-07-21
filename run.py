@@ -37,14 +37,17 @@ def build(src_path, build_path, cmake_opts=None):
         os.makedirs(build_path)
 
     projects = set(get_projects(src_path))
-    ret = dict.fromkeys(('make.'+p for p in projects), 0)
+    counters = ('cpu',) #,'memory','disk')
+    ret = {'make.{}.{}'.format(p,c): 0 for p in projects for c in counters}
 
-    start = time.time()
     cmd = ['cmake', '-DCMAKE_BUILD_TYPE=Release']
     if cmake_opts:
         cmd.extend(cmake_opts.split())
-    subprocess.check_call(cmd+[src_path], cwd=build_path)
-    ret['cmake'] = time.time()-start
+    cmd += [src_path]
+    start = time.time()
+    proc = subprocess.Popen(cmd, cwd=build_path)
+    ret['cmake.memory'] = os.wait4(proc.pid, 0)[2].ru_maxrss
+    ret['cmake.cpu'] = time.time()-start
 
     proc = subprocess.Popen(['make'], stdout=subprocess.PIPE, cwd=build_path)
     while proc.poll() is None:
@@ -56,7 +59,7 @@ def build(src_path, build_path, cmake_opts=None):
             end = time.time()
             for p in projects:
                 if output.startswith(p):
-                    ret['make.'+p] += end-start
+                    ret['make.'+p+'.cpu'] += end-start
                     break
         except Exception:
             logging.info('error reading make stdout',exc_info=True)
