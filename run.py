@@ -19,8 +19,6 @@ def get_projects(src_dir, url=False):
         line = line.strip()
         if (not line) or line[0] == '#':
             continue
-        if not (line.startswith('icetray') or line.startswith('cmake')):
-            continue
         if url:
             yield line.split()
         else:
