@@ -17,6 +17,7 @@ def main():
     parser = ArgumentParser()
     parser.add_argument('--start',help='start date in iso format')
     parser.add_argument('--end',help='end date in iso format')
+    parser.add_argument('--skip',help='skip X days')
     parser.add_argument('--url',help='url to metaproject')
     parser.add_argument('--benchmark',help='benchmark to run')
     parser.add_argument('-a','--result-address',dest='result_address',
@@ -32,7 +33,7 @@ def main():
     start = datetime.strptime(args.start, '%Y-%m-%d')
     end = datetime.strptime(args.end, '%Y-%m-%d')
     while start < end:
-        cmd = ['./run.py','--date', start]
+        cmd = ['./build.py','--date', start.strftime('%Y-%m-%d')]
         if args.url:
             cmd += ['--url', args.url]
         if args.benchmark:
@@ -44,7 +45,7 @@ def main():
         if args.debug:
             cmd += ['--debug']
         subprocess.call(cmd)
-        start += timedelta(days=1)
+        start += timedelta(days=int(args.skip)+1 if args.skip else 1)
 
 if __name__ == '__main__':
     main()
