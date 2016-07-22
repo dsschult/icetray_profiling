@@ -12,6 +12,8 @@ import logging
 
 from datetime import datetime, timedelta
 
+from util import Stats
+
 def get_projects(src_dir, url=False):
     output = subprocess.check_output(['svn','propget','svn:externals'],
                                      universal_newlines=True, cwd=src_dir)
@@ -35,8 +37,14 @@ def build(src_path, build_path, cmake_opts=None):
         os.makedirs(build_path)
 
     projects = set(get_projects(src_path))
-    counters = ('cpu',) #,'memory','disk')
-    ret = {'make.{}.{}'.format(p,c): 0 for p in projects for c in counters}
+    ret = {}
+    for p in projects:
+        for c in ('time', 'cpu_percent_avg', 'memory_avg'):
+            k = 'make.{}.{}'.format(p,c)
+            if c.endswith('avg'):
+                ret[k] = []
+            else:
+                ret[k] = 0.
 
     cmd = ['cmake', '-DCMAKE_BUILD_TYPE=Release']
     if cmake_opts:
@@ -44,23 +52,51 @@ def build(src_path, build_path, cmake_opts=None):
     cmd += [src_path]
     start = time.time()
     proc = subprocess.Popen(cmd, cwd=build_path)
-    ret['cmake.memory'] = os.wait4(proc.pid, 0)[2].ru_maxrss
-    ret['cmake.cpu'] = time.time()-start
+    ret['cmake.memory_max'] = os.wait4(proc.pid, 0)[2].ru_maxrss
+    ret['cmake.time'] = time.time()-start
 
+    s = Stats()
     proc = subprocess.Popen(['make'], stdout=subprocess.PIPE, cwd=build_path)
+    s.monitor(proc.pid)
+    last_project = None
     while proc.poll() is None:
         try:
             start = time.time()
             line = proc.stdout.readline().strip()
             print(line)
-            output = line[7:].strip().split()[-1]
+            if line.startswith('Linking'):
+                output = line.split('/')[-1].strip()
+            else:
+                output = line[7:].strip().split()[-1]
             end = time.time()
             for p in projects:
-                if output.startswith(p):
-                    ret['make.'+p+'.cpu'] += end-start
+                if p in output.split('/')[0]:
                     break
+            else:
+                if last_project:
+                    p = last_project
+                else:
+                    continue
+            ret['make.'+p+'.time'] += end-start
+            if last_project == p or end-start > 0.1:
+                if 'memory' in s.stats:
+                    ret['make.'+p+'.memory_avg'].append(s.stats['memory'])
+                if 'cpu_percent' in s.stats:
+                    ret['make.'+p+'.cpu_percent_avg'].append(s.stats['cpu_percent'])
+            last_project = p
         except Exception:
             logging.info('error reading make stdout',exc_info=True)
+        except:
+            proc.terminate()
+            break
+    s.stop()
+    for k in list(ret):
+        if k.startswith('make') and k.endswith('avg'):
+            ret[k.replace('avg','max')] = int(max(ret[k])) if ret[k] else 0
+            ret[k] = sum(ret[k])//len(ret[k]) if ret[k] else 0
+    #from IPython import embed
+    #embed()
+    #raise Exception()
     return ret
 
 def run(path, program):
