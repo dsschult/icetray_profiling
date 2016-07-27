@@ -12,7 +12,7 @@ import logging
 
 from datetime import datetime, timedelta
 
-from util import Stats
+from util import Stats, TimeStats, chmod
 
 def get_projects(src_dir, url=False):
     output = subprocess.check_output(['svn','propget','svn:externals'],
@@ -36,10 +36,26 @@ def build(src_path, build_path, cmake_opts=None):
     if not os.path.exists(build_path):
         os.makedirs(build_path)
 
+    s = TimeStats()
+    # fake CC and CXX
+    cc = os.path.join(build_path,'cc.sh')
+    cxx = os.path.join(build_path,'cxx.sh')
+    with open(cc,'w') as f:
+        f.write('#!/bin/sh\n')
+        f.write(s.time_cmd+(os.environ['CC'] if 'CC' in os.environ else 'gcc')+' $@\n')
+    with open(cxx,'w') as f:
+        f.write('#!/bin/sh\n')
+        f.write(s.time_cmd+(os.environ['CXX'] if 'CXX' in os.environ else 'g++')+' $@\n')
+    chmod(cc)
+    chmod(cxx)
+    environ = os.environ.copy()
+    environ['CC'] = cc
+    environ['CXX'] = cxx
+
     projects = set(get_projects(src_path))
     ret = {}
     for p in projects:
-        for c in ('time', 'cpu_percent_avg', 'memory_avg'):
+        for c in ('walltime', 'cpu_user', 'cpu_system', 'cpu_percent_avg', 'memory_avg'):
             k = 'make.{}.{}'.format(p,c)
             if c.endswith('avg'):
                 ret[k] = []
@@ -51,24 +67,28 @@ def build(src_path, build_path, cmake_opts=None):
         cmd.extend(cmake_opts.split())
     cmd += [src_path]
     start = time.time()
-    proc = subprocess.Popen(cmd, cwd=build_path)
+    proc = subprocess.Popen(cmd, cwd=build_path, env=environ)
     ret['cmake.memory_max'] = os.wait4(proc.pid, 0)[2].ru_maxrss
     ret['cmake.time'] = time.time()-start
 
-    s = Stats()
-    proc = subprocess.Popen(['make'], stdout=subprocess.PIPE, cwd=build_path)
-    s.monitor(proc.pid)
+    proc = subprocess.Popen(['make'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=build_path, env=environ)
     last_project = None
+    last_line = None
+    time_line = None
     while proc.poll() is None:
         try:
-            start = time.time()
             line = proc.stdout.readline().strip()
             print(line)
-            if line.startswith('Linking'):
-                output = line.split('/')[-1].strip()
+            if s.is_time_output(line):
+                time_line = line
             else:
-                output = line[7:].strip().split()[-1]
-            end = time.time()
+                last_line = line
+                continue
+
+            if last_line.startswith('Linking'):
+                output = last_line.split('/')[-1].strip()
+            else:
+                output = last_line[7:].strip().split()[-1]
             for p in projects:
                 if p in output.split('/')[0]:
                     break
@@ -77,26 +97,28 @@ def build(src_path, build_path, cmake_opts=None):
                     p = last_project
                 else:
                     continue
-            ret['make.'+p+'.time'] += end-start
-            if last_project == p or end-start > 0.1:
-                if 'memory' in s.stats:
-                    ret['make.'+p+'.memory_avg'].append(s.stats['memory'])
-                if 'cpu_percent' in s.stats:
-                    ret['make.'+p+'.cpu_percent_avg'].append(s.stats['cpu_percent'])
+
+            time_stats = s.stats(time_line)
+            ret['make.'+p+'.walltime'] += time_stats['cpu_walltime']
+            ret['make.'+p+'.cpu_user'] += time_stats['cpu_user']
+            ret['make.'+p+'.cpu_system'] += time_stats['cpu_system']
+            ret['make.'+p+'.cpu_percent_avg'].append(time_stats['cpu_percent'])
+            ret['make.'+p+'.memory_avg'].append(time_stats['memory_max'])
             last_project = p
         except Exception:
             logging.info('error reading make stdout',exc_info=True)
         except:
             proc.terminate()
             break
-    s.stop()
+
     for k in list(ret):
         if k.startswith('make') and k.endswith('avg'):
             ret[k.replace('avg','max')] = int(max(ret[k])) if ret[k] else 0
             ret[k] = sum(ret[k])//len(ret[k]) if ret[k] else 0
-    #from IPython import embed
-    #embed()
-    #raise Exception()
+
+    for k in ret:
+        print(k,':',ret[k])
+    raise Exception()
     return ret
 
 def run(path, program):
@@ -108,8 +130,14 @@ def convert_to_unix_time(date):
 
 
 class Results(object):
-    def __init__(self, address, prefix='icetray'):
-        self.prefix = prefix
+    def __init__(self, address, prefix=None):
+        if prefix:
+            self.prefix = prefix
+        else:
+            # compute prefix
+            hostname = socket.gethostname().replace('.','_')
+            gcc = subprocess.check_output(['gcc','--version']).split()[2].replace('.','_')
+            self.prefix = 'icetray.{}.{}'.format(hostname,gcc)
 
         # set up socket
         port = 2003
@@ -142,6 +170,7 @@ def main():
     parser.add_argument('-d','--date',help='date in iso format')
     parser.add_argument('--url',help='url to metaproject')
     parser.add_argument('--benchmark',help='benchmark to run')
+    parser.add_argument('--prefix',help='prefix to apply to stats')
     parser.add_argument('-a','--result-address',dest='result_address',
                         help='address to send results to')
     parser.add_argument('--cmake-opts',dest='cmake_opts',default=None,
@@ -162,7 +191,10 @@ def main():
         ret = build(srcdir, builddir,cmake_opts=args.cmake_opts)
         #run(builddir, args.benchmark)
 
-        r = Results(args.result_address)
+        kwargs = {}
+        if args.prefix:
+            kwargs['prefix'] = args.prefix
+        r = Results(args.result_address, **kwargs)
         for project in ret:
             r.send(project, ret[project], d)
 
