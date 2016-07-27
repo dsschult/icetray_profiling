@@ -116,9 +116,6 @@ def build(src_path, build_path, cmake_opts=None):
             ret[k.replace('avg','max')] = int(max(ret[k])) if ret[k] else 0
             ret[k] = sum(ret[k])//len(ret[k]) if ret[k] else 0
 
-    for k in ret:
-        print(k,':',ret[k])
-    raise Exception()
     return ret
 
 def run(path, program):
