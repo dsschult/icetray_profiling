@@ -133,7 +133,7 @@ class Results(object):
         else:
             # compute prefix
             hostname = socket.gethostname().replace('.','_')
-            gcc = subprocess.check_output(['gcc','--version']).split()[2].replace('.','_')
+            gcc = subprocess.check_output(['gcc','--version']).split(')')[1].split()[0].replace('.','_')
             self.prefix = 'icetray.{}.{}'.format(hostname,gcc)
 
         # set up socket
