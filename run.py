@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
-from __future__ import print_function, division
+from __future__ import absolute_import, division, print_function
+
 
 import os
 import time
@@ -26,6 +27,10 @@ def main():
                         help='additional cmake options')
     parser.add_argument('--debug',default=False,action='store_true',
                         help='debug logging')
+    parser.add_argument('--elastic',default=False,action='store_true',
+                        help='write result to elasic search')
+    parser.add_argument('--graphite',default=False,action='store_true',
+                        help='write result to graphite')
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.WARN)
@@ -44,6 +49,10 @@ def main():
             cmd += ['--cmake-opts', args.cmake_opts]
         if args.debug:
             cmd += ['--debug']
+        if args.graphite:
+            cmd += ['--graphite']
+        elif args.elastic:
+            cmd += ['--elastic']
         subprocess.call(cmd)
         start += timedelta(days=int(args.skip)+1 if args.skip else 1)
 
