@@ -5,6 +5,7 @@ import socket
 import subprocess
 import logging
 from hashlib import sha256
+from datetime import datetime
 
 import requests
 
@@ -24,12 +25,13 @@ class ElasicSearch(object):
         self.hostname = hostname+'/'+basename+'/'
         self.host = socket.gethostname()
         self.gcc = get_gcc_version()
-    def send(self, name, value, date):
-        value[host] = self.host
-        value[gcc] = self.gcc
-        value['date'] = date
-        index_name = sha256(self.host+self.gcc+name+date).hexdigest()
-        self.put(name, index_name, value)
+    def send(self, value, date, prefix='profile'):
+        value['host'] = self.host
+        value['gcc'] = self.gcc
+        value['date'] = date.isoformat()
+        value['insert_date'] = datetime.utcnow().isoformat()
+        index_name = sha256(self.host+self.gcc+value['date']+value['insert_date']).hexdigest()
+        self.put(prefix, index_name, value)
     def put(self, name, index_name, data):
         r = None
         try:

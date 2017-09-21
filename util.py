@@ -74,7 +74,7 @@ int main(char** args){
             bin = os.path.join(tmpdir,'bin')
             subprocess.check_call(['gcc','-o',bin,src], cwd=tmpdir)
             chmod(bin)
-            out = subprocess.check_output(self.time_cmd+bin, shell=True, cwd=tmpdir, stderr=subprocess.STDOUT)
+            out = subprocess.check_output(self.time_cmd+bin, shell=True, cwd=tmpdir, stderr=subprocess.STDOUT, universal_newlines=True)
             stats = self.stats(out)
         except Exception:
             logging.info('memory factor error', exc_info=True)

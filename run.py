@@ -18,43 +18,16 @@ def main():
     parser = ArgumentParser()
     parser.add_argument('--start',help='start date in iso format')
     parser.add_argument('--end',help='end date in iso format')
-    parser.add_argument('--skip',help='skip X days')
-    parser.add_argument('--url',help='url to metaproject')
-    parser.add_argument('--benchmark',help='benchmark to run')
-    parser.add_argument('-a','--result-address',dest='result_address',
-                        help='address to send results to')
-    parser.add_argument('--cmake-opts',dest='cmake_opts',default=None,
-                        help='additional cmake options')
-    parser.add_argument('--debug',default=False,action='store_true',
-                        help='debug logging')
-    parser.add_argument('--elastic',default=False,action='store_true',
-                        help='write result to elasic search')
-    parser.add_argument('--graphite',default=False,action='store_true',
-                        help='write result to graphite')
-    args = parser.parse_args()
-
-    logging.basicConfig(level=logging.DEBUG if args.debug else logging.WARN)
+    parser.add_argument('--skip',type=int,help='skip X days')
+    args,other = parser.parse_known_args()
 
     start = datetime.strptime(args.start, '%Y-%m-%d')
     end = datetime.strptime(args.end, '%Y-%m-%d')
     while start < end:
         cmd = ['./build.py','--date', start.strftime('%Y-%m-%d')]
-        if args.url:
-            cmd += ['--url', args.url]
-        if args.benchmark:
-            cmd += ['--benchmark', args.benchmark]
-        if args.result_address:
-            cmd += ['-a', args.result_address]
-        if args.cmake_opts:
-            cmd += ['--cmake-opts', args.cmake_opts]
-        if args.debug:
-            cmd += ['--debug']
-        if args.graphite:
-            cmd += ['--graphite']
-        elif args.elastic:
-            cmd += ['--elastic']
+        cmd += other
         subprocess.call(cmd)
-        start += timedelta(days=int(args.skip)+1 if args.skip else 1)
+        start += timedelta(days=int(args.skip) if args.skip else 1)
 
 if __name__ == '__main__':
     main()

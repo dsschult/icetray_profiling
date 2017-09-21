@@ -8,9 +8,12 @@ import tempfile
 import shutil
 import subprocess
 import logging
+from threading import Thread
 from collections import OrderedDict
 
 from datetime import datetime, timedelta
+
+import psutil
 
 from util import Stats, TimeStats, chmod
 
@@ -30,11 +33,12 @@ def get_projects(src_dir, url=False):
         else:
             yield line.split()[0]
 
-def checkout(url, path, date):
+def checkout(url, path, date, ignore_projects=[]):
     r = '{'+date.isoformat()+'}'
     subprocess.check_call(['svn','co','-r',r,'--depth','immediates',url,path])
     for p,p_url in get_projects(path,url=True):
-        subprocess.check_call(['svn','co','-r',r,p_url,os.path.join(path,p)])
+        if p not in ignore_projects:
+            subprocess.check_call(['svn','co','-r',r,p_url,os.path.join(path,p)])
 
 def build(src_path, build_path, cmake_opts=None):
     if not os.path.exists(build_path):
@@ -130,13 +134,41 @@ def build(src_path, build_path, cmake_opts=None):
 
     return ret
 
+def kill_proc(pid):
+    try:
+        p = psutil.Process(pid)
+        procs = [p]+p.children(recursive=True)
+        for p in procs:
+            p.terminate()
+        gone, still_alive = psutil.wait_procs(procs, timeout=1)
+        for p in still_alive:
+            p.kill()
+    except Exception:
+        pass
+
 def run(path, program):
     s = TimeStats()
+    p = subprocess.Popen('./env-shell.sh '+s.time_cmd+' '+program, stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT, shell=True, cwd=path,
+                         universal_newlines=True)
+    for i in range(1200):
+        if p.poll() is not None:
+            break
+        time.sleep(1)
+    else:
+        print('timeout occurred for',program)
+        kill_proc(p.pid)
+        raise Exception('killed over time')
+
+    r = p.returncode
+    out = p.communicate()[0]
     try:
-        out = subprocess.check_output('./env-shell.sh '+s.time_cmd+' '+program, stderr=subprocess.STDOUT, shell=True, cwd=path)
-    except subprocess.CalledProcessError as e:
-        logger.warn('call failed: %r', e.output)
-        raise
+        kill_proc(p.pid) # just in case it is sitting there
+    except Exception:
+        pass
+    if r != 0:
+        logger.warn('call failed: %s', out)
+        raise Exception('call failed')
     for line in out.split('\n'):
         line = line.strip()
         if s.is_time_output(line):
@@ -159,7 +191,7 @@ def walk_path(path):
 walk_path.cache = {}
 
 def tests(path):
-    out = subprocess.check_output(['ctest','-N'], cwd=path)
+    out = subprocess.check_output(['ctest','-N'], cwd=path, universal_newlines=True)
     test_paths = OrderedDict() # maintain test order for those that need it
     for l in out.split("\n"):
         if not l.startswith("  Test"):
@@ -174,13 +206,15 @@ def tests(path):
                     test_paths[test_name] = 'python '+os.path.join(proj,'resources',paths[f])
                     break
             else:
-                raise Exception('cannot find test %s::%s'%(proj,test_name))
+                print('cannot find test %s::%s'%(proj,test_name))
         else:
             # binary test
             t = os.path.join('bin','%s-%s'%(proj,name))
             if not os.path.isfile(os.path.join(path,t)):
-                raise Exception('cannot find test %s'%t)
-            test_paths[test_name] = t+' -a'
+                print('cannot find test %s'%t)
+            else:
+                test_paths[test_name] = t+' -a'
+    logger.warn('running %d tests', len(test_paths))
 
     # now run tests
     ret = {}
@@ -201,7 +235,8 @@ def main():
     parser = ArgumentParser()
     parser.add_argument('-d','--date',help='date in iso format')
     parser.add_argument('--url',help='url to metaproject')
-    parser.add_argument('--benchmark',help='benchmark to run')
+    parser.add_argument('--benchmark',default=None,help='benchmark to run')
+    parser.add_argument('--ignore_projects',nargs='*',help='ignore failing projects')
     parser.add_argument('--prefix',help='prefix to apply to stats')
     parser.add_argument('-a','--result-address',dest='result_address',
                         help='address to send results to')
@@ -223,7 +258,7 @@ def main():
     try:
         srcdir = os.path.join(tmpdir,'src')
         builddir = os.path.join(tmpdir,'build')
-        checkout(args.url, srcdir, d)
+        checkout(args.url, srcdir, d, ignore_projects=args.ignore_projects)
         ret = build(srcdir, builddir,cmake_opts=args.cmake_opts)
         if args.benchmark:
             run(builddir, args.benchmark)
@@ -241,9 +276,11 @@ def main():
             kwargs = {}
             if args.prefix:
                 kwargs['basename'] = args.prefix
-            r = ElasicSearch(args.result_address)
-            for project in ret:
-                r.send(project, ret[project], d)
+            r = ElasicSearch(args.result_address, **kwargs)
+            keys = {k.rsplit('.',1)[1] for k in ret}
+            for k in keys:
+                data = {kk.rsplit('.',1)[0]:ret[kk] for kk in ret if kk.endswith(k)}
+                r.send(data, d, prefix=k)
         else:
             for project in ret:
                 print(d, project, ret[project])
